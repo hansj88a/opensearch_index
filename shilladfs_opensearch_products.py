@@ -13,6 +13,9 @@
   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN(선택)
     명시 시 OpenSearch·Bedrock 모두 해당 키 사용. 미설정 시 boto3 기본 체인(profile, IAM 역할 등)
   IAM: OpenSearch + bedrock:InvokeModel(해당 모델 리소스)
+
+CLI 예: python shilladfs_opensearch_products.py seed
+        python shilladfs_opensearch_products.py upsert-sample  # sample_products_upsert() 데모
 """
 
 from __future__ import annotations
@@ -406,6 +409,112 @@ def sample_products() -> list[dict[str, Any]]:
     ]
 
 
+def sample_products_upsert() -> list[dict[str, Any]]:
+    """
+    upsert 데모용 문서(embedding 없음 — upsert 시 recompute_embedding=True 권장).
+    - SKU-10001, SKU-20002, SKU-30003: seed 샘플과 동일 product_id, 일부 필드만 변경 → 기존 문서 덮어쓰기.
+    - SKU-UPSERT-NEW-01: 새 product_id → 신규 색인과 동일하게 동작.
+    """
+    return [
+        {
+            "product_id": "SKU-10001",
+            "product_name": "구찌 에이스 레더 스니커즈",
+            "category": "신발 스니커즈 남성",
+            "brand": {
+                "ko": "구찌",
+                "en": "Gucci",
+                "aliases": ["구짜", "guccui", "GUCCI"],
+            },
+            "price": 929000.0,
+            "created_at": "2025-06-01T15:00:00Z",
+            "gender": "남",
+            "colors": ["화이트", "그린"],
+            "age": "성인",
+            "size_capacity": None,
+            "size_shoes": {"kr": 270.0, "eu": 42.0, "uk": 8.0, "us": 9.0},
+            "description": "클래식한 가죽 스니커즈(가격·설명 업서트 데모). 뒤꿈치 시그니처 웹 디테일.",
+            "usage_effects": "일상 착용, 캐주얼 룩 완성, 시즌 오프 추천",
+            "keywords": ["스니커즈", "남성신발", "럭셔리", "가죽", "업서트데모"],
+            "visual_features": "흰색 가죽, 뒤쪽 그린·레드 웹 스트라이프",
+            "auditory_features": "",
+            "olfactory_features": "신 가죽 냄새",
+            "gustatory_features": "",
+            "tactile_features": "부드러운 가죽, 안정적인 착화감",
+        },
+        {
+            "product_id": "SKU-20002",
+            "product_name": "설화수 윤조 에센스 90ml",
+            "category": "스킨케어 에센스",
+            "brand": {
+                "ko": "설화수",
+                "en": "Sulwhasoo",
+                "aliases": ["雪花秀"],
+            },
+            "price": 115000.0,
+            "created_at": "2025-06-01T15:00:00Z",
+            "gender": "공용",
+            "colors": [],
+            "age": "성인",
+            "size_capacity": 90.0,
+            "size_shoes": None,
+            "description": "한방 성분 기반 대표 에센스(업서트 데모: 가격 인하 반영).",
+            "usage_effects": "피부 보습, 유·수분 밸런스, 광채, 메이크업 베이스로도 활용",
+            "keywords": ["에센스", "한방", "보습", "윤조", "업서트데모"],
+            "visual_features": "갈색 유리병, 골드 캡",
+            "auditory_features": "",
+            "olfactory_features": "은은한 한방 향",
+            "gustatory_features": "",
+            "tactile_features": "물타입 제형, 빠른 흡수",
+        },
+        {
+            "product_id": "SKU-30003",
+            "product_name": "Sony WH-1000XM5 Wireless Headphones",
+            "category": "가전 헤드폰 노이즈캔슬링",
+            "brand": {
+                "ko": "소니",
+                "en": "Sony",
+                "aliases": ["SONY", "쏘니"],
+            },
+            "price": 429000.0,
+            "created_at": "2025-06-01T15:00:00Z",
+            "gender": "공용",
+            "colors": ["블랙", "실버"],
+            "age": "성인",
+            "size_capacity": None,
+            "size_shoes": None,
+            "description": "업계 선도 노이즈 캔슬링 헤드폰(업서트 데모: 프로모션 가격).",
+            "usage_effects": "집중력 향상, 피로 완화, 출퇴근·재택근무용",
+            "keywords": ["헤드폰", "노이즈캔슬링", "블루투스", "여행", "업서트데모"],
+            "visual_features": "미니멀한 오버이어 디자인, 매트 마감",
+            "auditory_features": "풍부한 저음, 선명한 보컬, 주변음 모드",
+            "olfactory_features": "",
+            "gustatory_features": "",
+            "tactile_features": "가벼운 착용감, 부드러운 이어패드",
+        },
+        {
+            "product_id": "SKU-UPSERT-NEW-01",
+            "product_name": "업서트 신규 샘플 토트백",
+            "category": "가방 토트 여성",
+            "brand": {"ko": "데모브랜드", "en": "DemoBrand", "aliases": ["데모"]},
+            "price": 198000.0,
+            "created_at": "2025-06-01T15:00:00Z",
+            "gender": "여",
+            "colors": ["카멜"],
+            "age": "성인",
+            "size_capacity": None,
+            "size_shoes": None,
+            "description": "product_id 가 기존에 없을 때 upsert 로 신규 문서가 들어가는 예시입니다.",
+            "usage_effects": "데일리 출근, 쇼핑",
+            "keywords": ["토트백", "데모", "신규업서트"],
+            "visual_features": "심플 실루엣, 탑 핸들",
+            "auditory_features": "",
+            "olfactory_features": "",
+            "gustatory_features": "",
+            "tactile_features": "부드러운 합성가죽",
+        },
+    ]
+
+
 def index_sample_documents(
     client,
     documents: list[dict[str, Any]] | None = None,
@@ -567,9 +676,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="ShillaDFS products OpenSearch index tools")
     parser.add_argument(
         "command",
-        choices=["create", "seed", "delete", "delete-query", "recreate", "show"],
-        help="create=인덱스만 생성, seed=BEDROCK Titan Text Embeddings v2 후 샘플 색인, delete=product_id로 삭제, "
-        "delete-query=필드 기준 삭제, recreate=인덱스 삭제 후 재생성+Titan v2 임베딩 샘플, show=문서 조회",
+        choices=["create", "seed", "upsert-sample", "delete", "delete-query", "recreate", "show"],
+        help="create=인덱스만 생성, seed=BEDROCK Titan 후 샘플 색인, upsert-sample=업서트 데모 데이터(Bedrock 임베딩), "
+        "delete=product_id로 삭제, delete-query=필드 기준 삭제, recreate=인덱스 재생성+seed, show=문서 조회",
     )
     parser.add_argument("--product-id", dest="product_id", default="", help="delete/show 시 사용")
     parser.add_argument(
@@ -621,6 +730,13 @@ def main() -> None:
         br = get_bedrock_runtime_client()
         docs = attach_titan_embeddings_to_documents(sample_products(), bedrock_client=br)
         print(index_sample_documents(client, documents=docs))
+        return
+
+    if args.command == "upsert-sample":
+        print(create_index(client))
+        br = get_bedrock_runtime_client()
+        docs = sample_products_upsert()
+        print(upsert_product_documents(client, docs, recompute_embedding=True, bedrock_client=br))
         return
 
     if args.command == "delete":
