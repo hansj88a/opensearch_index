@@ -428,6 +428,71 @@ def index_sample_documents(
     return client.bulk(body=body)
 
 
+def upsert_product_document(
+    client,
+    document: dict[str, Any],
+    index_name: str = INDEX_NAME,
+    refresh: bool | str = True,
+    recompute_embedding: bool = False,
+    bedrock_client=None,
+) -> dict[str, Any]:
+    """
+    product_id를 문서 _id로 하여 색인한다. 동일 product_id(동일 _id)가 이미 있으면 문서 전체가 교체된다.
+    recompute_embedding=True이면 Bedrock Titan으로 embedding을 다시 계산한 뒤 색인한다.
+    """
+    pid = document.get("product_id")
+    if not pid or not str(pid).strip():
+        raise ValueError("document에 유효한 product_id가 필요합니다.")
+    pid = str(pid).strip()
+    doc = dict(document)
+    if recompute_embedding:
+        br = bedrock_client if bedrock_client is not None else get_bedrock_runtime_client()
+        enriched = attach_titan_embeddings_to_documents([doc], bedrock_client=br)
+        doc = enriched[0]
+    if refresh is True:
+        refresh_param = "true"
+    elif refresh is False:
+        refresh_param = "false"
+    else:
+        refresh_param = str(refresh)
+    return client.index(
+        index=index_name,
+        id=pid,
+        body=doc,
+        params={"refresh": refresh_param},
+    )
+
+
+def upsert_product_documents(
+    client,
+    documents: list[dict[str, Any]],
+    index_name: str = INDEX_NAME,
+    recompute_embedding: bool = False,
+    bedrock_client=None,
+) -> dict[str, Any]:
+    """
+    여러 상품을 bulk로 색인한다. _id는 product_id와 동일하므로 기존 문서는 덮어쓴다(업서트).
+    recompute_embedding=True이면 문서마다 embedding을 Bedrock으로 재계산한다.
+    """
+    docs = list(documents)
+    if recompute_embedding:
+        br = bedrock_client if bedrock_client is not None else get_bedrock_runtime_client()
+        docs = attach_titan_embeddings_to_documents(docs, bedrock_client=br)
+    lines: list[str] = []
+    import json
+
+    for doc in docs:
+        pid = doc.get("product_id")
+        if not pid:
+            continue
+        lines.append(json.dumps({"index": {"_index": index_name, "_id": str(pid)}}))
+        lines.append(json.dumps(doc, ensure_ascii=False))
+    if not lines:
+        return {"errors": False, "items": [], "message": "no documents"}
+    body = "\n".join(lines) + "\n"
+    return client.bulk(body=body)
+
+
 def delete_product_by_id(
     client,
     product_id: str,
