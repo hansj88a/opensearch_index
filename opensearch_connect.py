@@ -2,6 +2,8 @@
 로컬 환경에서 Amazon OpenSearch Service 도메인 연결을 점검한다.
 (TCP/HTTPS, SigV4 서명, IAM·FGAC 권한 단계별로 실패 지점을 구분하는 데 유리하다.)
 
+이 파일만으로 동작하며 다른 프로젝트 모듈을 import 하지 않는다.
+
   pip install opensearch-py boto3
 
   아래 상수에 값을 넣은 뒤:
@@ -17,8 +19,6 @@ import os
 import sys
 from typing import Any, Callable
 
-from shilladfs_opensearch_products import get_opensearch_client
-
 # ---------------------------------------------------------------------------
 # 로컬 테스트 전용 — 실제 값으로 수정 후 사용
 # ---------------------------------------------------------------------------
@@ -30,6 +30,9 @@ TEST_AWS_ACCESS_KEY_ID = ""
 TEST_AWS_SECRET_ACCESS_KEY = ""
 # STS 임시 자격 증명일 때만 입력, 아니면 빈 문자열
 TEST_AWS_SESSION_TOKEN = ""
+
+# AWS OpenSearch Service SigV4 서비스 이름
+OPENSEARCH_SERVICE = "es"
 
 
 def apply_test_constants_to_environ() -> None:
@@ -44,6 +47,54 @@ def apply_test_constants_to_environ() -> None:
         os.environ["AWS_SECRET_ACCESS_KEY"] = TEST_AWS_SECRET_ACCESS_KEY.strip()
     if TEST_AWS_SESSION_TOKEN.strip():
         os.environ["AWS_SESSION_TOKEN"] = TEST_AWS_SESSION_TOKEN.strip()
+
+
+def get_aws_boto_session():
+    """명시적 키가 환경에 있으면 그것으로, 없으면 기본 자격 증명 체인으로 Session 을 만든다."""
+    import boto3
+
+    key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+    secret = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+    token = (os.environ.get("AWS_SESSION_TOKEN") or "").strip()
+    if key and secret:
+        kw: dict[str, str] = {"aws_access_key_id": key, "aws_secret_access_key": secret}
+        if token:
+            kw["aws_session_token"] = token
+        return boto3.Session(**kw)
+    return boto3.Session()
+
+
+def create_opensearch_client():
+    """TEST_* 상수·환경 변수를 바탕으로 SigV4 인증 OpenSearch 클라이언트를 만든다."""
+    from opensearchpy import AWSV4SignerAuth, OpenSearch, RequestsHttpConnection
+
+    apply_test_constants_to_environ()
+
+    session = get_aws_boto_session()
+    credentials = session.get_credentials()
+    if credentials is None:
+        raise RuntimeError(
+            "AWS 자격 증명을 찾을 수 없습니다. "
+            "TEST_AWS_ACCESS_KEY_ID·TEST_AWS_SECRET_ACCESS_KEY 를 채우거나 "
+            "~/.aws/credentials·IAM 역할 등 기본 체인을 설정하세요."
+        )
+
+    region = (TEST_AWS_REGION.strip() or "ap-northeast-2").strip()
+    raw = TEST_OPENSEARCH_ENDPOINT.strip()
+    if not raw:
+        raise RuntimeError("TEST_OPENSEARCH_ENDPOINT 가 비어 있습니다. 도메인 호스트를 입력하세요.")
+
+    auth = AWSV4SignerAuth(credentials, region, OPENSEARCH_SERVICE)
+    host = raw.replace("https://", "").replace("http://", "").rstrip("/")
+
+    return OpenSearch(
+        hosts=[{"host": host, "port": 443}],
+        http_auth=auth,
+        use_ssl=True,
+        verify_certs=True,
+        connection_class=RequestsHttpConnection,
+        timeout=60,
+    )
 
 
 def _format_exc(exc: BaseException) -> str:
@@ -98,29 +149,21 @@ def print_summary(
 
 
 def main() -> int:
-    apply_test_constants_to_environ()
-
-    endpoint = TEST_OPENSEARCH_ENDPOINT.strip() or None
-    region = TEST_AWS_REGION.strip() or None
-
     try:
-        client = get_opensearch_client(
-            opensearch_endpoint=endpoint,
-            aws_region=region,
-        )
+        client = create_opensearch_client()
     except RuntimeError as e:
         print(_format_exc(e), file=sys.stderr)
         return 1
 
-    resolved_host = endpoint or (os.environ.get("OPENSEARCH_ENDPOINT") or "").strip()
-    resolved_region = region or (os.environ.get("AWS_REGION") or "ap-northeast-2").strip()
+    resolved_host = TEST_OPENSEARCH_ENDPOINT.strip()
+    resolved_region = (TEST_AWS_REGION.strip() or "ap-northeast-2").strip()
 
     steps: list[tuple[str, bool, Any]] = []
     steps.append(("ping (HEAD /)", *_run_step(lambda: test_ping(client))))
     steps.append(("GET / (info)", *_run_step(lambda: test_info(client))))
     steps.append(("GET /_cluster/health", *_run_step(lambda: test_cluster_health(client))))
 
-    print_summary(resolved_host or "(OPENSEARCH_ENDPOINT)", resolved_region, steps)
+    print_summary(resolved_host, resolved_region, steps)
 
     if all(ok for _, ok, _ in steps):
         return 0
