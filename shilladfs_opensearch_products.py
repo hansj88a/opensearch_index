@@ -264,8 +264,14 @@ def attach_titan_embeddings_to_documents(
     return out
 
 
-def get_opensearch_client():
-    """AWS SigV4로 OpenSearch 클라이언트를 생성한다."""
+def get_opensearch_client(
+    opensearch_endpoint: str | None = None,
+    aws_region: str | None = None,
+):
+    """
+    AWS SigV4로 OpenSearch 클라이언트를 생성한다.
+    opensearch_endpoint·aws_region을 주면 그 값을 쓰고, 아니면 당시 환경 변수·모듈 기본값을 쓴다.
+    """
     from opensearchpy import AWSV4SignerAuth, OpenSearch, RequestsHttpConnection
 
     session = get_aws_boto_session()
@@ -277,9 +283,22 @@ def get_opensearch_client():
             "또는 ~/.aws/credentials·IAM 역할을 설정하세요."
         )
 
-    auth = AWSV4SignerAuth(credentials, AWS_REGION, OPENSEARCH_SERVICE)
+    region = (aws_region if aws_region is not None else os.environ.get("AWS_REGION", AWS_REGION)).strip()
+    raw = (
+        opensearch_endpoint
+        if opensearch_endpoint is not None
+        else os.environ.get("OPENSEARCH_ENDPOINT", OPENSEARCH_ENDPOINT)
+    )
+    raw = (raw or "").strip()
+    if not raw:
+        raise RuntimeError(
+            "OpenSearch 엔드포인트가 비었습니다. "
+            "OPENSEARCH_ENDPOINT 환경 변수 또는 get_opensearch_client(opensearch_endpoint=...) 를 설정하세요."
+        )
 
-    host = OPENSEARCH_ENDPOINT.replace("https://", "").replace("http://", "").rstrip("/")
+    auth = AWSV4SignerAuth(credentials, region, OPENSEARCH_SERVICE)
+
+    host = raw.replace("https://", "").replace("http://", "").rstrip("/")
 
     return OpenSearch(
         hosts=[{"host": host, "port": 443}],
