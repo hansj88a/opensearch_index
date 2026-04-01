@@ -10,7 +10,8 @@
   BEDROCK_REGION       Bedrock 호출용(미설정 시 AWS_REGION과 동일)
   BEDROCK_EMBEDDING_MODEL_ID  기본 amazon.titan-embed-text-v2:0
   TITAN_EMBED_NORMALIZE       true/false, 기본 true (Titan v2 normalize 옵션)
-  AWS 자격 증명은 boto3 기본 체인(profile, env, IAM role 등)
+  AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN(선택)
+    명시 시 OpenSearch·Bedrock 모두 해당 키 사용. 미설정 시 boto3 기본 체인(profile, IAM 역할 등)
   IAM: OpenSearch + bedrock:InvokeModel(해당 모델 리소스)
 """
 
@@ -106,11 +107,67 @@ INDEX_BODY: dict[str, Any] = {
 }
 
 
-def get_bedrock_runtime_client():
-    """Amazon Bedrock Runtime 클라이언트(Titan Text Embeddings v2 호출용)."""
+def _explicit_aws_credential_kwargs() -> dict[str, str]:
+    """환경 변수에 액세스 키·시크릿이 있으면 boto3.Session에 넘길 인자 dict, 없으면 빈 dict."""
+    key = (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip()
+    secret = (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip()
+    token = (os.environ.get("AWS_SESSION_TOKEN") or "").strip()
+    if key and secret:
+        out: dict[str, str] = {
+            "aws_access_key_id": key,
+            "aws_secret_access_key": secret,
+        }
+        if token:
+            out["aws_session_token"] = token
+        return out
+    return {}
+
+
+def get_aws_boto_session():
+    """명시적 키가 있으면 그것으로, 없으면 기본 자격 증명 체인으로 Session을 만든다."""
     import boto3
 
-    return boto3.client(service_name="bedrock-runtime", region_name=BEDROCK_REGION)
+    explicit = _explicit_aws_credential_kwargs()
+    if explicit:
+        return boto3.Session(**explicit)
+    return boto3.Session()
+
+
+def prompt_aws_credentials_to_environ() -> None:
+    """콘솔에서 액세스 키·시크릿(·선택 세션 토큰)을 입력받아 환경 변수에 설정한다."""
+    import getpass
+
+    if not (os.environ.get("AWS_ACCESS_KEY_ID") or "").strip():
+        os.environ["AWS_ACCESS_KEY_ID"] = input("AWS Access Key ID: ").strip()
+    if not (os.environ.get("AWS_SECRET_ACCESS_KEY") or "").strip():
+        os.environ["AWS_SECRET_ACCESS_KEY"] = getpass.getpass("AWS Secret Access Key: ").strip()
+    token = input("AWS Session Token (임시 자격증명만 해당, 없으면 Enter): ").strip()
+    if token:
+        os.environ["AWS_SESSION_TOKEN"] = token
+
+
+def apply_cli_aws_credentials_to_environ(
+    access_key_id: str | None,
+    secret_access_key: str | None,
+    session_token: str | None,
+) -> None:
+    """CLI로 넘긴 키를 환경 변수에 반영한다(None·빈 문자열은 무시)."""
+    if access_key_id and str(access_key_id).strip():
+        os.environ["AWS_ACCESS_KEY_ID"] = str(access_key_id).strip()
+    if secret_access_key and str(secret_access_key).strip():
+        os.environ["AWS_SECRET_ACCESS_KEY"] = str(secret_access_key).strip()
+    if session_token is not None:
+        st = str(session_token).strip()
+        if st:
+            os.environ["AWS_SESSION_TOKEN"] = st
+        elif "AWS_SESSION_TOKEN" in os.environ:
+            del os.environ["AWS_SESSION_TOKEN"]
+
+
+def get_bedrock_runtime_client():
+    """Amazon Bedrock Runtime 클라이언트(Titan Text Embeddings v2 호출용)."""
+    session = get_aws_boto_session()
+    return session.client(service_name="bedrock-runtime", region_name=BEDROCK_REGION)
 
 
 def build_embedding_text_for_product(doc: dict[str, Any]) -> str:
@@ -191,7 +248,7 @@ def invoke_titan_text_embedding_v2(text: str, bedrock_client=None) -> list[float
         )
     return vec
 
- 
+
 def attach_titan_embeddings_to_documents(
     documents: list[dict[str, Any]],
     bedrock_client=None,
@@ -209,14 +266,15 @@ def attach_titan_embeddings_to_documents(
 
 def get_opensearch_client():
     """AWS SigV4로 OpenSearch 클라이언트를 생성한다."""
-    import boto3
     from opensearchpy import AWSV4SignerAuth, OpenSearch, RequestsHttpConnection
 
-    session = boto3.Session(region_name=AWS_REGION)
+    session = get_aws_boto_session()
     credentials = session.get_credentials()
     if credentials is None:
         raise RuntimeError(
-            "AWS 자격 증명을 찾을 수 없습니다. 환경 변수, ~/.aws/credentials, 또는 IAM 역할을 설정하세요."
+            "AWS 자격 증명을 찾을 수 없습니다. "
+            "AWS_ACCESS_KEY_ID·AWS_SECRET_ACCESS_KEY 환경 변수, --prompt-aws-credentials, "
+            "또는 ~/.aws/credentials·IAM 역할을 설정하세요."
         )
 
     auth = AWSV4SignerAuth(credentials, AWS_REGION, OPENSEARCH_SERVICE)
@@ -430,7 +488,35 @@ def main() -> None:
         "delete-query=필드 기준 삭제, recreate=인덱스 삭제 후 재생성+Titan v2 임베딩 샘플, show=문서 조회",
     )
     parser.add_argument("--product-id", dest="product_id", default="", help="delete/show 시 사용")
+    parser.add_argument(
+        "--aws-access-key-id",
+        default=None,
+        help="AWS 액세스 키 ID(미지정 시 AWS_ACCESS_KEY_ID 환경 변수 또는 기본 체인)",
+    )
+    parser.add_argument(
+        "--aws-secret-access-key",
+        default=None,
+        help="AWS 시크릿 액세스 키(미지정 시 AWS_SECRET_ACCESS_KEY 환경 변수 또는 기본 체인)",
+    )
+    parser.add_argument(
+        "--aws-session-token",
+        default=None,
+        help="임시 자격 증명용 세션 토큰(선택)",
+    )
+    parser.add_argument(
+        "--prompt-aws-credentials",
+        action="store_true",
+        help="키가 비어 있으면 콘솔에서 Access Key / Secret Key(·Session Token) 입력",
+    )
     args = parser.parse_args()
+
+    apply_cli_aws_credentials_to_environ(
+        args.aws_access_key_id,
+        args.aws_secret_access_key,
+        args.aws_session_token,
+    )
+    if args.prompt_aws_credentials:
+        prompt_aws_credentials_to_environ()
 
     client = get_opensearch_client()
 
