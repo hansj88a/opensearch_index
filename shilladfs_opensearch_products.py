@@ -191,7 +191,7 @@ def invoke_titan_text_embedding_v2(text: str, bedrock_client=None) -> list[float
         )
     return vec
 
-
+ 
 def attach_titan_embeddings_to_documents(
     documents: list[dict[str, Any]],
     bedrock_client=None,
